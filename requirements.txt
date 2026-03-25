@@ -1,0 +1,7 @@
+#to install all dependencies: pip install -r requirements.txt
+torch>=2.0.0
+opencv-python>=4.8.0
+ultralytics>=8.0.0  # YOLOv8
+numpy>=1.24.0
+pandas>=2.0.0
+Pillow>=10.0.0
