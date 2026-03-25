@@ -375,28 +375,4 @@ python scripts/prepare_data.py --dataset_path ./data
 
 ---
 
-## 📄 License
-
-[Specify your license here]
-
----
-
-## ✍️ Authors
-
-- [Your Name/Team]
-- Based on models by: Ultralytics (YOLO), Meta (SAM), OpenAI/DepthAnything (Depth)
-
----
-
-## 🎯 Next Steps
-
-- [ ] Implement all core modules
-- [ ] Write comprehensive tests
-- [ ] Train/fine-tune on Hong Kong dataset
-- [ ] Build WebUI or mobile app
-- [ ] Deploy as API service
-- [ ] Optimize for real-time inference
-
----
-
 **Happy Coding! 🚀**
