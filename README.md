@@ -26,7 +26,6 @@ project/
 │   ├── Depth_Anything/                # Depth Anything V2 weights/checkpoint
 │   ├── MobileSAM/                     # MobileSAM weights/checkpoint
 │   └── LLM/                           # LLM weights/checkpoint (optional)
-└── .gitignore
 ```
 
 ## Project Overview
