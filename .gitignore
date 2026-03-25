@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Data
+*.csv
+*.tsv
+*.json
+*.xlsx
+*.xls
+*.h5
+*.pickle
+
+# Models
+*.h5
+*.joblib
+*.pkl
