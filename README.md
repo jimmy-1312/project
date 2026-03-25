@@ -15,17 +15,17 @@ project/
 │   ├── evaluation.py                  # RMSE, AbsRel, δ<1.25, P/R/F1
 │   ├── LLMgeneration.py               # optional LLM output
 │   ├── data_loader.py                 # data loader (tentative --> NYU Depth V2 & custom HK)
-│   └── main.py                        # input(image) --> output(every object + corresponding distance)(map)
+│   └── main.py                        # input(image document) --> output(every objects map to corresponding distance)(return maps)
 ├── data/
 │   ├── training/                      # training data (probably from NYU Depth V2)
 │   ├── evaluation/                    # evaluation data (probably seperate from training set)
 │   ├── testing/                       # test data (as well)
 │   └── HK_custom_for_finetuning/      # see if can use for finetune
 ├── model/
-│   ├── Yolo/                          # YOLOv8 weights/checkpoint
-│   ├── Depth_Anything/                # Depth Anything V2 weights/checkpoint
-│   ├── MobileSAM/                     # MobileSAM weights/checkpoint
-│   └── LLM/                           # LLM weights/checkpoint (optional)
+│   ├── Yolo/                          # see if needed a seperate folder for storing model weight/checkpoint
+│   ├── Depth_Anything/               
+│   ├── MobileSAM/                     
+│   └── LLM/                          
 ```
 
 ## Project Overview
