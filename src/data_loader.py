@@ -71,8 +71,8 @@ class DataLoader:
                 'filename': str - image filename
         """
         image_path = self.image_paths[index]
-        image = cv2.imread(str(image_path))  # Loads as BGR
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert to RGB
+        image = cv2.imread(str(image_path))  # Loads as BGR (YOLO expects BGR)
+        # NOTE: Do NOT convert to RGB - YOLO is trained on BGR format
         
         return {
             'image': image,

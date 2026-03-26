@@ -53,13 +53,13 @@ class Visualizer:
         Draw bounding boxes on image.
         
         Args:
-            image: Image array (H, W, 3) uint8 RGB
+            image: Image array (H, W, 3) uint8 BGR
             objects: List of object dicts with 'bbox' and 'class_name'
             show_confidence: Whether to display confidence scores
             thickness: Line thickness for boxes
         
         Returns:
-            Image with drawn bounding boxes (H, W, 3) uint8
+            Image with drawn bounding boxes (H, W, 3) uint8 BGR
         
         TODO:
         1. Create copy of image
@@ -72,9 +72,9 @@ class Visualizer:
         
         Tools needed: matplotlib or cv2 for drawing
         """
-        # Create a copy and convert to BGR for cv2
+        # Create a copy (image is already BGR from DataLoader)
         img_display = image.copy()
-        img_bgr = cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR)
+        img_bgr = img_display
         
         for idx, obj in enumerate(objects):
             # Get bbox coordinates
