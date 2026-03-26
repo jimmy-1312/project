@@ -68,9 +68,6 @@ data/HK_custom_for_finetuning/*
 # ============================================================
 # Results & Outputs
 # ============================================================
-results/visualizations/*
-results/depth_maps/*
-results/metrics/*
 !results/**/.gitkeep
 output/
 *.mp4
