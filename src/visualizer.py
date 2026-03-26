@@ -10,6 +10,8 @@ TODO: Implement visualization functions for analysis and debugging.
 import numpy as np
 from typing import List, Dict, Optional, Tuple
 import config
+import cv2
+import matplotlib.pyplot as plt
 
 
 class Visualizer:
@@ -70,7 +72,56 @@ class Visualizer:
         
         Tools needed: matplotlib or cv2 for drawing
         """
-        pass
+        # Create a copy and convert to BGR for cv2
+        img_display = image.copy()
+        img_bgr = cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR)
+        
+        for idx, obj in enumerate(objects):
+            # Get bbox coordinates
+            bbox = obj['bbox']
+            x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+            
+            # Get color for this object
+            color = Visualizer.COLORS[idx % len(Visualizer.COLORS)]
+            
+            # Draw rectangle
+            cv2.rectangle(img_bgr, (x1, y1), (x2, y2), color, thickness)
+            
+            # Prepare label text
+            label = obj['class_name']
+            if show_confidence and 'confidence' in obj:
+                label += f" {obj['confidence']:.2f}"
+            
+            # Get text size for background rectangle
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.6
+            font_thickness = 1
+            text_size = cv2.getTextSize(label, font, font_scale, font_thickness)[0]
+            
+            # Draw background rectangle for text
+            text_x, text_y = x1, max(y1 - 5, 20)
+            cv2.rectangle(
+                img_bgr,
+                (text_x, text_y - text_size[1] - 5),
+                (text_x + text_size[0] + 5, text_y),
+                color,
+                -1
+            )
+            
+            # Draw text
+            cv2.putText(
+                img_bgr,
+                label,
+                (text_x, text_y - 2),
+                font,
+                font_scale,
+                (255, 255, 255),
+                font_thickness
+            )
+        
+        # Convert back to RGB
+        img_display = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        return img_display
     
     @staticmethod
     def visualize_masks(

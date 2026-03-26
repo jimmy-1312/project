@@ -12,6 +12,8 @@ TODO: Implement the YOLODetector class with the following structure:
 import numpy as np
 from typing import List, Dict, Union, Tuple
 import config
+from ultralytics import YOLO
+import cv2
 
 
 class YOLODetector:
@@ -60,7 +62,16 @@ class YOLODetector:
             ImportError: If ultralytics/torch not installed
             RuntimeError: If model download/load fails
         """
-        pass
+        self.model_name = model_name or config.YOLO_MODEL_NAME
+        self.confidence = confidence or config.YOLO_CONFIDENCE
+        self.iou = iou or config.YOLO_IOU
+        self.device = device or config.DEVICE
+        
+        # Load YOLO model
+        self.model = YOLO(self.model_name)
+        self.model.to(self.device)
+        
+        print(f"YOLODetector initialized with {self.model_name} on {self.device}")
     
     def detect(self, image: Union[np.ndarray, str]) -> List[Dict]:
         """
@@ -90,7 +101,28 @@ class YOLODetector:
         
         Note: YOLO output format varies by version, handle accordingly
         """
-        pass
+        results = self.model(image, conf=self.confidence, iou=self.iou, device=self.device, verbose=False)
+        
+        detections = []
+        if len(results) > 0:
+            result = results[0]
+            boxes = result.boxes
+            
+            for i in range(len(boxes)):
+                box = boxes[i]
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                conf = float(box.conf[0].cpu().numpy())
+                class_id = int(box.cls[0].cpu().numpy())
+                class_name = self.class_names.get(class_id, f"Class {class_id}")
+                
+                detections.append({
+                    'bbox': np.array([x1, y1, x2, y2], dtype=np.float32),
+                    'confidence': conf,
+                    'class_id': class_id,
+                    'class_name': class_name,
+                })
+        
+        return detections
     
     @property
     def class_names(self) -> Dict[int, str]:
@@ -104,7 +136,7 @@ class YOLODetector:
         1. Access YOLO model's class names attribute
         2. Return as dictionary or convert from list/dict as needed
         """
-        pass
+        return self.model.names
     
     def get_num_classes(self) -> int:
         """
@@ -116,7 +148,7 @@ class YOLODetector:
         TODO:
         1. Return length of class names or model.nc attribute
         """
-        pass
+        return self.model.nc
 
 
 # ============================================================
@@ -136,7 +168,12 @@ def convert_xywh_to_xyxy(bbox: np.ndarray) -> np.ndarray:
     
     TODO: Implement conversion
     """
-    pass
+    x_c, y_c, w, h = bbox
+    x1 = x_c - w / 2
+    y1 = y_c - h / 2
+    x2 = x_c + w / 2
+    y2 = y_c + h / 2
+    return np.array([x1, y1, x2, y2])
 
 
 def filter_detections_by_class(
@@ -155,7 +192,7 @@ def filter_detections_by_class(
     
     TODO: Implement filtering
     """
-    pass
+    return [d for d in detections if d['class_id'] in class_ids]
 
 
 def filter_detections_by_confidence(
@@ -174,4 +211,4 @@ def filter_detections_by_confidence(
     
     TODO: Implement filtering
     """
-    pass
+    return [d for d in detections if d['confidence'] >= threshold]
