@@ -12,6 +12,7 @@ from typing import List, Dict, Tuple, Optional, Iterator
 import numpy as np
 from pathlib import Path
 import config
+import cv2
 
 
 class DataLoader:
@@ -41,11 +42,23 @@ class DataLoader:
         4. Store list of image paths
         5. Print loading summary
         """
-        pass
+        self.data_dir = Path(data_dir)
+        self.image_extensions = image_extensions or ['.jpg', '.jpeg', '.png', '.bmp']
+        
+        # Scan directory for images
+        self.image_paths = []
+        for ext in self.image_extensions:
+            self.image_paths.extend(self.data_dir.glob(f'*{ext}'))
+            self.image_paths.extend(self.data_dir.glob(f'*{ext.upper()}'))
+        
+        # Remove duplicates and sort
+        self.image_paths = sorted(list(set(self.image_paths)))
+        
+        print(f"DataLoader initialized with {len(self.image_paths)} images from {data_dir}")
     
     def __len__(self) -> int:
         """Return number of images in dataset."""
-        pass
+        return len(self.image_paths)
     
     def __getitem__(self, index: int) -> Dict:
         """
@@ -57,11 +70,20 @@ class DataLoader:
                 'path': str - image file path
                 'filename': str - image filename
         """
-        pass
+        image_path = self.image_paths[index]
+        image = cv2.imread(str(image_path))  # Loads as BGR
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert to RGB
+        
+        return {
+            'image': image,
+            'path': str(image_path),
+            'filename': image_path.name,
+        }
     
     def __iter__(self) -> Iterator[Dict]:
         """Iterate through all samples."""
-        pass
+        for i in range(len(self)):
+            yield self[i]
     
     def load_batch(
         self,
@@ -83,7 +105,13 @@ class DataLoader:
         2. Optionally resize
         3. Return list of dicts
         """
-        pass
+        samples = []
+        for idx in indices:
+            sample = self[idx]
+            if resize:
+                sample['image'] = cv2.resize(sample['image'], (resize[1], resize[0]))
+            samples.append(sample)
+        return samples
 
 
 class CustomDataLoader(DataLoader):
