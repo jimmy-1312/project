@@ -3,29 +3,25 @@ Depth Anything V2 Depth Estimation Module
 
 This module provides monocular depth estimation using the Depth Anything V2 model.
 It estimates relative depth maps and can convert them to metric depth.
-
-TODO: Implement the DepthEstimator class for depth map prediction.
 """
 
 import numpy as np
+import torch
 from typing import Optional, Tuple
 from PIL import Image
+import cv2
+
+try:
+    from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+except ImportError:
+    AutoImageProcessor, AutoModelForDepthEstimation = None, None
+
 import config
 
 
 class DepthEstimator:
     """
     Monocular depth estimation using Depth Anything V2.
-    
-    This class estimates per-pixel depth from single RGB images. It can also
-    compute metric (absolute) depth if ground truth is available, or scale
-    relative depth to approximate metric values.
-    
-    Attributes:
-        model_name (str): Model identifier from HuggingFace Hub
-        device (str): Device to run model on
-        processor: Image processor for model input preparation
-        model: The depth estimation model object
     """
     
     def __init__(
@@ -33,112 +29,93 @@ class DepthEstimator:
         model_name: str = None,
         device: str = None,
     ) -> None:
-        """
-        Initialize Depth Anything V2 depth estimator.
+        self.model_name = model_name or getattr(config, 'DEPTH_MODEL_NAME', 'depth-anything/Depth-Anything-V2-Small-hf')
+        self.device = device or getattr(config, 'DEVICE', 'cuda' if torch.cuda.is_available() else 'cpu')
         
-        Args:
-            model_name (str, optional): HuggingFace model identifier.
-                Defaults to config.DEPTH_PROCESSOR_NAME
-            device (str, optional): Device name ('cuda' or 'cpu').
-                Defaults to config.DEVICE
-        
-        TODO:
-        1. Set model name and device from args or config
-        2. Load processor from HuggingFace using AutoImageProcessor
-        3. Load model from HuggingFace using AutoModelForDepthEstimation
-        4. Move model to device and set to eval mode
-        5. Print initialization message
-        
-        Raises:
-            ImportError: If transformers library not installed
-            ConnectionError: If model download from HF Hub fails
-        """
-        pass
+        if AutoImageProcessor is None:
+            raise ImportError("Please install transformers: pip install transformers")
+            
+        print(f"Loading Depth Estimator ({self.model_name}) on {self.device}...")
+        self.processor = AutoImageProcessor.from_pretrained(self.model_name)
+        self.model = AutoModelForDepthEstimation.from_pretrained(self.model_name).to(self.device)
+        self.model.eval()
+        print("Depth Estimator loaded successfully.")
     
     def estimate_depth(self, image: np.ndarray) -> np.ndarray:
-        """
-        Estimate relative depth map from image.
+        if isinstance(image, np.ndarray):
+            # Assumes input is RGB
+            pil_image = Image.fromarray(image)
+        else:
+            pil_image = image
+            
+        original_size = pil_image.size[::-1]  # (H, W)
         
-        Args:
-            image: Input image - can be:
-                  - numpy array (H, W, 3) dtype uint8, RGB or BGR
-                  - PIL Image object
+        inputs = self.processor(images=pil_image, return_tensors="pt").to(self.device)
         
-        Returns:
-            depth_map: Relative depth map (H, W) dtype float32.
-                      Higher values indicate farther objects (typically 0-1 after normalization)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            predicted_depth = outputs.predicted_depth
+            
+        # Resize to original
+        predicted_depth = torch.nn.functional.interpolate(
+            predicted_depth.unsqueeze(1),
+            size=original_size,
+            mode="bicubic",
+            align_corners=False,
+        ).squeeze()
         
-        TODO:
-        1. Convert image to PIL Image if numpy array
-        2. Get original image dimensions (H, W)
-        3. Process image with self.processor
-        4. Run model inference with no_grad()
-        5. Extract predicted_depth from model output
-        6. Resize to original image size using interpolation
-        7. Convert to numpy and return
+        depth_map = predicted_depth.cpu().numpy()
         
-        Note: Output range depends on model; usually normalize to [0, 1]
-        """
-        pass
+        # Normalize to 0-1 for relative depth representation
+        d_min, d_max = depth_map.min(), depth_map.max()
+        if d_max > d_min:
+            depth_map = (depth_map - d_min) / (d_max - d_min)
+            
+        return depth_map
     
     def depth_to_distance(
         self,
         depth_map: np.ndarray,
         mask: Optional[np.ndarray] = None
     ) -> float:
-        """
-        Compute median depth value within a region.
-        
-        Args:
-            depth_map: Depth map (H, W) as returned by estimate_depth()
-            mask: Optional binary mask (H, W) bool to compute distance for
-                  specific region. If None, use whole image.
-        
-        Returns:
-            float: Median depth value in the region.
-                  Returns nan if mask is empty or invalid
-        
-        TODO:
-        1. If mask provided, extract depth_map values where mask is True
-        2. If no mask, use all depth values
-        3. Compute median of values
-        4. Return as float (handle empty case)
-        
-        Note: Median is preferred over mean for robustness to outliers
-        """
-        pass
+        if mask is not None:
+            valid_depths = depth_map[mask > 0]
+        else:
+            valid_depths = depth_map.flatten()
+            
+        if len(valid_depths) == 0:
+            return float('nan')
+            
+        return float(np.median(valid_depths))
     
     def compute_direction(
         self,
         mask: np.ndarray,
         image_width: int
     ) -> Tuple[str, float, float]:
-        """
-        Determine object direction and angle from mask centroid.
+        y_indices, x_indices = np.where(mask > 0)
         
-        Args:
-            mask: Binary mask (H, W) bool
-            image_width: Width of image in pixels
+        if len(x_indices) == 0:
+            return ('unknown', 0.0, 0.5)
+            
+        centroid_x = np.mean(x_indices)
+        centroid_x_norm = centroid_x / image_width
         
-        Returns:
-            Tuple of:
-                - direction: 'left', 'center', or 'right' (str)
-                - angle_deg: Angle from image center in degrees (float).
-                            Negative = left, positive = right
-                - centroid_x_norm: Normalized x position of centroid [0-1] (float)
+        # Calculate angle based on FOV (assuming 60 degrees default)
+        fov = getattr(config, 'HORIZONTAL_FOV', 60.0)
+        angle_deg = (centroid_x_norm - 0.5) * fov
         
-        TODO:
-        1. Find all True pixels in mask
-        2. Compute centroid x position as mean of x coordinates
-        3. Normalize to [0-1] by dividing by image_width
-        4. Compute horizontal FOV angle from normalized position
-           (use HORIZONTAL_FOV from config)
-        5. Classify as 'left'/'center'/'right' using DIR_LEFT/DIR_RIGHT thresholds
-        6. Return tuple (direction, angle_deg, centroid_x_norm)
+        dir_left_thresh = getattr(config, 'DIR_LEFT', 0.33)
+        dir_right_thresh = getattr(config, 'DIR_RIGHT', 0.66)
         
-        Note: Handle empty masks by returning ('unknown', 0.0, 0.5)
-        """
-        pass
+        if centroid_x_norm < dir_left_thresh:
+            direction = 'left'
+        elif centroid_x_norm > dir_right_thresh:
+            direction = 'right'
+        else:
+            direction = 'center'
+            
+        return direction, float(angle_deg), float(centroid_x_norm)
     
     def scale_depth_to_meters(
         self,
@@ -146,111 +123,74 @@ class DepthEstimator:
         gt_depth: Optional[np.ndarray] = None,
         max_depth: Optional[float] = None
     ) -> Tuple[np.ndarray, float, float]:
-        """
-        Convert relative depth to metric (absolute) depth in meters.
+        max_d = max_depth or getattr(config, 'MAX_DEPTH_M', 10.0)
         
-        Args:
-            depth_map: Relative depth map from estimate_depth()
-            gt_depth: Optional ground truth depth map (H, W) in meters for
-                     metric alignment. If provided, uses affine alignment.
-            max_depth: Maximum depth to clip to (meters).
-                      Defaults to config.MAX_DEPTH_M
-        
-        Returns:
-            Tuple of:
-                - metric_depth: Metric depth map (H, W) in meters
-                - scale: Scaling factor applied (float)
-                - shift: Shift offset applied (float)
-        
-        TODO (with ground truth):
-        1. Find valid pixels: where gt_depth > threshold, both maps finite
-        2. Set up linear system: find best fit depth_map * scale + shift = gt_depth
-        3. Use least squares to solve for scale and shift
-        4. Apply to depth_map: metric = scale * depth_map + shift
-        5. Clip to [0, max_depth]
-        6. Return (metric_depth, scale, shift)
-        
-        TODO (without ground truth):
-        1. Use simple min-max scaling to [0, max_depth]
-        2. Compute scale and shift to represent this transformation
-        3. Return (scaled_depth, scale, shift)
-        
-        Note: This aligns relative depth to metric space using calibration
-        """
-        pass
+        if gt_depth is not None:
+            # Mask valid pixels
+            valid = (gt_depth > 0.1) & (gt_depth < max_d) & np.isfinite(depth_map)
+            
+            if np.sum(valid) > 10:
+                y = gt_depth[valid]
+                x = depth_map[valid]
+                
+                # Least squares: y = scale * x + shift
+                A = np.vstack([x, np.ones(len(x))]).T
+                scale, shift = np.linalg.lstsq(A, y, rcond=None)[0]
+                
+                metric_depth = scale * depth_map + shift
+                metric_depth = np.clip(metric_depth, 0, max_d)
+                return metric_depth, float(scale), float(shift)
+                
+        # Fallback without GT
+        scale = max_d
+        shift = 0.0
+        scaled_depth = depth_map * scale
+        return scaled_depth, float(scale), float(shift)
 
 
 # ============================================================
-# Helper Functions (Optional)
+# Helper Functions
 # ============================================================
 
 def normalize_depth_map(
     depth_map: np.ndarray,
     percentile_range: Tuple[float, float] = (2, 98)
 ) -> np.ndarray:
-    """
-    Normalize depth map for visualization.
-    
-    Args:
-        depth_map: Depth map with arbitrary range
-        percentile_range: (min_percentile, max_percentile) for robust normalization
-    
-    Returns:
-        Normalized depth map in [0, 1]
-    
-    TODO:
-    1. Compute specified percentiles of depth_map
-    2. Clip depth_map to percentile range
-    3. Normalize to [0, 1]
-    4. Return normalized map
-    """
-    pass
-
+    p_min, p_max = np.percentile(depth_map, percentile_range)
+    if p_max > p_min:
+        norm_map = np.clip((depth_map - p_min) / (p_max - p_min), 0, 1)
+    else:
+        norm_map = np.zeros_like(depth_map)
+    return norm_map
 
 def compute_depth_uncertainty(
     depth_map: np.ndarray,
     window_size: int = 5
 ) -> np.ndarray:
-    """
-    Estimate per-pixel depth uncertainty from variance in local window.
-    
-    Args:
-        depth_map: Depth map (H, W)
-        window_size: Size of local window for computing variance
-    
-    Returns:
-        uncertainty_map: (H, W) with uncertainty estimates
-    
-    TODO:
-    1. Create local windows around each pixel
-    2. Compute variance of depth within each window
-    3. Return as uncertainty map
-    
-    Note: Optional; useful for quality assessment
-    """
-    pass
-
+    # Use cv2 blur to compute local variance: var(X) = E(X^2) - E(X)^2
+    mean_x = cv2.blur(depth_map, (window_size, window_size))
+    mean_x2 = cv2.blur(depth_map**2, (window_size, window_size))
+    variance = np.clip(mean_x2 - mean_x**2, 0, None)
+    return np.sqrt(variance)
 
 def depth_map_to_3d_points(
     depth_map: np.ndarray,
     camera_intrinsics: np.ndarray = None
 ) -> np.ndarray:
-    """
-    Convert depth map to 3D point cloud.
+    H, W = depth_map.shape
+    v, u = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
     
-    Args:
-        depth_map: Depth map (H, W)
-        camera_intrinsics: Camera K matrix (3, 3). If None, assume generic camera.
+    if camera_intrinsics is not None:
+        fx, fy = camera_intrinsics[0, 0], camera_intrinsics[1, 1]
+        cx, cy = camera_intrinsics[0, 2], camera_intrinsics[1, 2]
+    else:
+        # Generic camera assumption
+        fx = fy = max(H, W)
+        cx, cy = W / 2, H / 2
+        
+    x = (u - cx) * depth_map / fx
+    y = (v - cy) * depth_map / fy
+    z = depth_map
     
-    Returns:
-        points_3d: (H*W, 3) array of 3D coordinates [x, y, z]
-    
-    TODO:
-    1. Create grid of pixel coordinates
-    2. Back-project using camera intrinsics (if provided)
-    3. Multiply by depth to get 3D coordinates
-    4. Return as (N, 3) array
-    
-    Note: Optional advanced feature
-    """
-    pass
+    points_3d = np.stack((x, y, z), axis=-1).reshape(-1, 3)
+    return points_3d
