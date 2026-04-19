@@ -72,9 +72,9 @@ class Visualizer:
         
         Tools needed: matplotlib or cv2 for drawing
         """
-        # Create a copy (image is already BGR from DataLoader)
+        # Create a copy and convert to BGR for cv2
         img_display = image.copy()
-        img_bgr = img_display
+        img_bgr = cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR)
         
         for idx, obj in enumerate(objects):
             # Get bbox coordinates

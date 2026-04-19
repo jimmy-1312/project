@@ -55,37 +55,86 @@ class Evaluator:
         gt_depth: np.ndarray,
     ) -> Dict[str, float]:
         """
-        Evaluate monocular depth estimation against ground truth.
-        
+        Evaluate monocular depth estimation against ground truth (NYU Depth V2 protocol).
+
         Args:
-            predicted_depth: Predicted depth map (H, W) float
-            gt_depth: Ground truth depth map (H, W) float
-        
+            predicted_depth: Predicted depth map (H, W) float, metric depth
+            gt_depth: Ground truth depth map (H, W) float, metric depth
+
         Returns:
-            Dict with metrics:
+            Dict with keys:
                 - 'abs_rel': Absolute relative error
                 - 'sq_rel': Squared relative error
                 - 'rmse': Root mean squared error
                 - 'rmse_log': RMSE of log depth
-                - 'a1', 'a2', 'a3': Accuracy thresholds
                 - 'mae': Mean absolute error
-        
-        TODO:
-        Implement standard depth evaluation metrics (NYU Depth V2 protocol):
-        
-        1. Filter valid pixels where gt_depth > 0 and both are finite
-        2. Compute absolute relative error: mean(|pred - gt| / gt)
-        3. Compute squared relative error: mean((pred - gt)^2 / gt)
-        4. Compute RMSE: sqrt(mean((pred - gt)^2))
-        5. Compute RMSE of log: sqrt(mean((log(pred) - log(gt))^2))
-        6. Compute accuracy at thresholds (delta):
-           a_i = % of pred where max(pred/gt, gt/pred) < 1.25^i for i=1,2,3
-        7. Compute MAE: mean(|pred - gt|)
-        8. Return dict of all metrics
-        
-        Note: Standard benchmark protocol from NYU Depth V2 dataset
+                - 'delta_1', 'delta_2', 'delta_3': Accuracy at 1.25^i thresholds
+
+        Raises:
+            ValueError: If inputs are not 2D arrays or shapes don't match
         """
-        pass
+        if predicted_depth.ndim != 2 or gt_depth.ndim != 2:
+            raise ValueError("Both inputs must be 2D arrays")
+        if predicted_depth.shape != gt_depth.shape:
+            raise ValueError(f"Shape mismatch: pred {predicted_depth.shape} vs gt {gt_depth.shape}")
+
+        min_d = getattr(config, 'MIN_DEPTH_M', 0.1)
+        max_d = getattr(config, 'MAX_DEPTH_M', 10.0)
+
+        # Filter valid pixels
+        valid = (
+            (gt_depth > min_d) &
+            (gt_depth < max_d) &
+            np.isfinite(predicted_depth) &
+            np.isfinite(gt_depth)
+        )
+
+        if np.sum(valid) < 1:
+            return {
+                'abs_rel': float('nan'),
+                'sq_rel': float('nan'),
+                'rmse': float('nan'),
+                'rmse_log': float('nan'),
+                'mae': float('nan'),
+                'delta_1': float('nan'),
+                'delta_2': float('nan'),
+                'delta_3': float('nan'),
+            }
+
+        pred_valid = predicted_depth[valid]
+        gt_valid = gt_depth[valid]
+
+        # Compute error metrics
+        diff = pred_valid - gt_valid
+        abs_rel = np.mean(np.abs(diff) / gt_valid)
+        sq_rel = np.mean((diff ** 2) / gt_valid)
+        rmse = np.sqrt(np.mean(diff ** 2))
+        mae = np.mean(np.abs(diff))
+
+        # Log-scale error (pred, gt > 0)
+        valid_log = (pred_valid > 0) & (gt_valid > 0)
+        if np.sum(valid_log) > 0:
+            log_diff = np.log(pred_valid[valid_log]) - np.log(gt_valid[valid_log])
+            rmse_log = np.sqrt(np.mean(log_diff ** 2))
+        else:
+            rmse_log = float('nan')
+
+        # Accuracy thresholds (delta)
+        ratio = np.maximum(pred_valid / gt_valid, gt_valid / pred_valid)
+        delta_1 = np.mean(ratio < 1.25)
+        delta_2 = np.mean(ratio < 1.25 ** 2)
+        delta_3 = np.mean(ratio < 1.25 ** 3)
+
+        return {
+            'abs_rel': float(abs_rel),
+            'sq_rel': float(sq_rel),
+            'rmse': float(rmse),
+            'rmse_log': float(rmse_log),
+            'mae': float(mae),
+            'delta_1': float(delta_1),
+            'delta_2': float(delta_2),
+            'delta_3': float(delta_3),
+        }
     
     @staticmethod
     def evaluate_detections(
@@ -269,20 +318,63 @@ class Evaluator:
 # Metric Functions (Individual calculations)
 # ============================================================
 
+def evaluate_depth_qualitative(predicted_depth: np.ndarray) -> Dict[str, any]:
+    """
+    Qualitative evaluation of depth map (no ground truth).
+
+    Computes statistics on predicted depth without comparison to GT.
+
+    Args:
+        predicted_depth: (H, W) float depth map
+
+    Returns:
+        Dict with keys:
+            - 'min', 'max', 'mean', 'std', 'median': Statistics
+            - 'valid_ratio': Fraction of finite pixels [0, 1]
+            - 'inf_count': Number of Inf pixels
+            - 'nan_count': Number of NaN pixels
+            - 'shape': (H, W) tuple
+    """
+    valid = np.isfinite(predicted_depth)
+    valid_pixels = predicted_depth[valid]
+
+    result = {
+        'shape': predicted_depth.shape,
+        'inf_count': int(np.sum(np.isinf(predicted_depth))),
+        'nan_count': int(np.sum(np.isnan(predicted_depth))),
+        'valid_ratio': float(np.sum(valid) / predicted_depth.size),
+    }
+
+    if len(valid_pixels) > 0:
+        result['min'] = float(np.min(valid_pixels))
+        result['max'] = float(np.max(valid_pixels))
+        result['mean'] = float(np.mean(valid_pixels))
+        result['std'] = float(np.std(valid_pixels))
+        result['median'] = float(np.median(valid_pixels))
+    else:
+        result['min'] = float('nan')
+        result['max'] = float('nan')
+        result['mean'] = float('nan')
+        result['std'] = float('nan')
+        result['median'] = float('nan')
+
+    return result
+
+
 def compute_iou(
     mask1: np.ndarray,
     mask2: np.ndarray,
 ) -> float:
     """
     Compute Intersection over Union between two masks.
-    
+
     Args:
         mask1: Binary mask (H, W) bool
         mask2: Binary mask (H, W) bool
-    
+
     Returns:
         IoU score [0-1]
-    
+
     TODO:
     1. Compute intersection: logical AND
     2. Compute union: logical OR
