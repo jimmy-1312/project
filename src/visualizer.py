@@ -53,13 +53,13 @@ class Visualizer:
         Draw bounding boxes on image.
         
         Args:
-            image: Image array (H, W, 3) uint8 RGB
+            image: Image array (H, W, 3) uint8 BGR
             objects: List of object dicts with 'bbox' and 'class_name'
             show_confidence: Whether to display confidence scores
             thickness: Line thickness for boxes
         
         Returns:
-            Image with drawn bounding boxes (H, W, 3) uint8
+            Image with drawn bounding boxes (H, W, 3) uint8 BGR
         
         TODO:
         1. Create copy of image
