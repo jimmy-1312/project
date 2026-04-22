@@ -7,7 +7,13 @@ Run tests with: pytest tests/test_depth_estimator.py -v
 import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock
-from src.depth_estimator import DepthEstimator
+from src.depth_estimator import (
+    DepthEstimator,
+    aggregate_depth_in_bbox,
+    aggregate_depth_in_bboxes,
+    aggregate_depth_in_mask,
+    aggregate_depth_in_masks,
+)
 from src.evaluation import evaluate_depth_qualitative, Evaluator
 import config
 
@@ -257,3 +263,106 @@ class TestDepthEstimator:
 
         assert np.isnan(metrics['abs_rel'])
         assert np.isnan(metrics['rmse'])
+
+
+class TestRegionAggregation:
+    """Aggregation of depth over YOLO bboxes / MobileSAM masks."""
+
+    @pytest.fixture
+    def depth_ramp(self):
+        # Gradient 0..1 in the x-direction — makes the expected means trivial
+        # to compute for any axis-aligned bbox.
+        x = np.linspace(0.0, 1.0, 100, dtype=np.float32)
+        return np.tile(x, (80, 1))  # (80, 100)
+
+    def test_bbox_mean(self, depth_ramp):
+        # columns 10..20 => x in [0.10, 0.19], mean ~ 0.1455
+        val = aggregate_depth_in_bbox(depth_ramp, [10, 0, 20, 80], mode="mean")
+        expected = depth_ramp[0:80, 10:20].mean()
+        assert val == pytest.approx(expected, abs=1e-6)
+
+    def test_bbox_median_max_min(self, depth_ramp):
+        bbox = [10, 0, 20, 80]
+        region = depth_ramp[0:80, 10:20]
+        assert aggregate_depth_in_bbox(depth_ramp, bbox, "median") == pytest.approx(np.median(region))
+        assert aggregate_depth_in_bbox(depth_ramp, bbox, "max") == pytest.approx(region.max())
+        assert aggregate_depth_in_bbox(depth_ramp, bbox, "min") == pytest.approx(region.min())
+
+    def test_bbox_top_k_closest_high(self, depth_ramp):
+        # closest_side="high" (Depth Anything default): larger = closer
+        # top_k=1 on a monotonic ramp should equal the max value in region
+        bbox = [10, 0, 20, 80]
+        region = depth_ramp[0:80, 10:20]
+        val = aggregate_depth_in_bbox(depth_ramp, bbox, mode="top_k", k=1)
+        assert val == pytest.approx(region.max(), abs=1e-6)
+
+    def test_bbox_top_p_equivalent_to_top_k(self, depth_ramp):
+        # Region has 80*10 = 800 pixels. top_p=0.1 => 80 pixels => same as top_k=80.
+        bbox = [10, 0, 20, 80]
+        via_p = aggregate_depth_in_bbox(depth_ramp, bbox, mode="top_p", p=0.1)
+        via_k = aggregate_depth_in_bbox(depth_ramp, bbox, mode="top_k", k=80)
+        assert via_p == pytest.approx(via_k, abs=1e-6)
+
+    def test_bbox_closest_side_low(self, depth_ramp):
+        # Flip convention (metric depth): smaller = closer. top_k=1 => min of region.
+        bbox = [10, 0, 20, 80]
+        region = depth_ramp[0:80, 10:20]
+        val = aggregate_depth_in_bbox(depth_ramp, bbox, mode="top_k", k=1, closest_side="low")
+        assert val == pytest.approx(region.min(), abs=1e-6)
+
+    def test_bbox_out_of_bounds_clipped(self, depth_ramp):
+        # Partial overflow should clip; full overflow returns NaN
+        clipped = aggregate_depth_in_bbox(depth_ramp, [-5, -5, 10, 10], mode="mean")
+        assert np.isfinite(clipped)
+        fully_out = aggregate_depth_in_bbox(depth_ramp, [200, 200, 300, 300], mode="mean")
+        assert np.isnan(fully_out)
+
+    def test_bbox_invalid_mode_raises(self, depth_ramp):
+        with pytest.raises(ValueError):
+            aggregate_depth_in_bbox(depth_ramp, [0, 0, 10, 10], mode="nope")
+
+    def test_bbox_top_k_requires_k(self, depth_ramp):
+        with pytest.raises(ValueError):
+            aggregate_depth_in_bbox(depth_ramp, [0, 0, 10, 10], mode="top_k")
+
+    def test_bbox_top_p_requires_valid_p(self, depth_ramp):
+        with pytest.raises(ValueError):
+            aggregate_depth_in_bbox(depth_ramp, [0, 0, 10, 10], mode="top_p", p=0)
+        with pytest.raises(ValueError):
+            aggregate_depth_in_bbox(depth_ramp, [0, 0, 10, 10], mode="top_p", p=1.5)
+
+    def test_mask_mean(self, depth_ramp):
+        mask = np.zeros_like(depth_ramp, dtype=np.uint8)
+        mask[0:80, 10:20] = 1
+        via_mask = aggregate_depth_in_mask(depth_ramp, mask, mode="mean")
+        via_bbox = aggregate_depth_in_bbox(depth_ramp, [10, 0, 20, 80], mode="mean")
+        assert via_mask == pytest.approx(via_bbox, abs=1e-6)
+
+    def test_mask_empty_returns_nan(self, depth_ramp):
+        mask = np.zeros_like(depth_ramp, dtype=np.uint8)
+        assert np.isnan(aggregate_depth_in_mask(depth_ramp, mask, mode="mean"))
+
+    def test_mask_shape_mismatch_raises(self, depth_ramp):
+        bad_mask = np.ones((10, 10), dtype=np.uint8)
+        with pytest.raises(ValueError):
+            aggregate_depth_in_mask(depth_ramp, bad_mask, mode="mean")
+
+    def test_batched_bboxes(self, depth_ramp):
+        boxes = [[10, 0, 20, 80], [50, 0, 60, 80], [90, 0, 100, 80]]
+        vals = aggregate_depth_in_bboxes(depth_ramp, boxes, mode="mean")
+        assert len(vals) == 3
+        # Monotonic ramp: later boxes are farther right => larger mean
+        assert vals[0] < vals[1] < vals[2]
+
+    def test_batched_masks_stacked(self, depth_ramp):
+        masks = np.zeros((2, *depth_ramp.shape), dtype=np.uint8)
+        masks[0, 0:80, 10:20] = 1
+        masks[1, 0:80, 50:60] = 1
+        vals = aggregate_depth_in_masks(depth_ramp, masks, mode="mean")
+        assert len(vals) == 2
+        assert vals[0] < vals[1]
+
+    def test_ignores_nan_values(self):
+        dm = np.array([[0.1, np.nan, 0.3, 0.4]], dtype=np.float32)
+        v = aggregate_depth_in_bbox(dm, [0, 0, 4, 1], mode="mean")
+        assert v == pytest.approx(np.mean([0.1, 0.3, 0.4]))

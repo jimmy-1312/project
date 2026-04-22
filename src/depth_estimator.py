@@ -7,7 +7,7 @@ It estimates relative depth maps and can convert them to metric depth.
 
 import numpy as np
 import torch
-from typing import Optional, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 from PIL import Image
 import cv2
 
@@ -212,6 +212,176 @@ class DepthEstimator:
         shift = 0.0
         scaled_depth = np.clip(depth_map * scale, 0, max_d)
         return scaled_depth, float(scale), float(shift)
+
+
+# ============================================================
+# Region Aggregation (for YOLO bboxes / MobileSAM masks)
+# ============================================================
+
+# Depth Anything V2 (after min-max normalization in estimate_depth) uses
+# the convention: LARGER value = CLOSER to camera. Flip closest_side="low"
+# if the caller already converted to metric depth (smaller = closer).
+_AGG_MODES = {"mean", "median", "max", "min", "top_k", "top_p"}
+
+
+def _aggregate_values(
+    values: np.ndarray,
+    mode: str,
+    k: Optional[int],
+    p: Optional[float],
+    closest_side: str,
+) -> float:
+    """Reduce a 1D array of depth samples to a single scalar."""
+    if mode not in _AGG_MODES:
+        raise ValueError(f"mode must be one of {_AGG_MODES}, got {mode!r}")
+    if closest_side not in ("high", "low"):
+        raise ValueError("closest_side must be 'high' or 'low'")
+
+    values = np.asarray(values, dtype=np.float32).ravel()
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return float("nan")
+
+    if mode == "mean":
+        return float(values.mean())
+    if mode == "median":
+        return float(np.median(values))
+    if mode == "max":
+        return float(values.max())
+    if mode == "min":
+        return float(values.min())
+
+    if mode == "top_k":
+        if k is None or k <= 0:
+            raise ValueError("top_k mode requires positive integer k")
+        k_eff = int(min(k, values.size))
+        if closest_side == "high":
+            kept = np.partition(values, -k_eff)[-k_eff:]
+        else:
+            kept = np.partition(values, k_eff - 1)[:k_eff]
+        return float(kept.mean())
+
+    # top_p
+    if p is None or not (0.0 < p <= 1.0):
+        raise ValueError("top_p mode requires p in (0, 1]")
+    k_eff = max(1, int(np.ceil(values.size * p)))
+    if closest_side == "high":
+        kept = np.partition(values, -k_eff)[-k_eff:]
+    else:
+        kept = np.partition(values, k_eff - 1)[:k_eff]
+    return float(kept.mean())
+
+
+def aggregate_depth_in_bbox(
+    depth_map: np.ndarray,
+    bbox: Sequence[float],
+    mode: str = "mean",
+    k: Optional[int] = None,
+    p: Optional[float] = None,
+    closest_side: str = "high",
+) -> float:
+    """
+    Aggregate depth inside an axis-aligned bounding box.
+
+    Args:
+        depth_map: (H, W) float array
+        bbox: [x1, y1, x2, y2] in pixel coordinates (x2/y2 exclusive).
+            Box is clipped to the image; float coords are rounded.
+        mode: "mean" | "median" | "max" | "min" | "top_k" | "top_p"
+        k: number of pixels to keep when mode="top_k"
+        p: fraction in (0, 1] of pixels to keep when mode="top_p"
+        closest_side: "high" if larger depth = closer (Depth Anything V2
+            relative depth), "low" if smaller = closer (metric depth).
+
+    Returns:
+        Single aggregated depth value, or NaN if the region is empty.
+    """
+    if depth_map.ndim != 2:
+        raise ValueError(f"depth_map must be 2D, got shape {depth_map.shape}")
+    H, W = depth_map.shape
+
+    x1, y1, x2, y2 = bbox
+    x1 = max(0, int(round(float(x1))))
+    y1 = max(0, int(round(float(y1))))
+    x2 = min(W, int(round(float(x2))))
+    y2 = min(H, int(round(float(y2))))
+    if x2 <= x1 or y2 <= y1:
+        return float("nan")
+
+    region = depth_map[y1:y2, x1:x2]
+    return _aggregate_values(region, mode, k, p, closest_side)
+
+
+def aggregate_depth_in_mask(
+    depth_map: np.ndarray,
+    mask: np.ndarray,
+    mode: str = "mean",
+    k: Optional[int] = None,
+    p: Optional[float] = None,
+    closest_side: str = "high",
+) -> float:
+    """
+    Aggregate depth inside a segmentation mask (e.g. MobileSAM).
+
+    Args:
+        depth_map: (H, W) float
+        mask: (H, W) bool or uint8. Pixels > 0 are treated as ROI.
+        Other args: see aggregate_depth_in_bbox.
+
+    Returns:
+        Single aggregated depth value, or NaN if mask is empty.
+    """
+    if depth_map.ndim != 2:
+        raise ValueError(f"depth_map must be 2D, got shape {depth_map.shape}")
+    if mask.shape != depth_map.shape:
+        raise ValueError(
+            f"mask shape {mask.shape} != depth_map shape {depth_map.shape}"
+        )
+    values = depth_map[np.asarray(mask) > 0]
+    return _aggregate_values(values, mode, k, p, closest_side)
+
+
+def aggregate_depth_in_bboxes(
+    depth_map: np.ndarray,
+    bboxes: Sequence[Sequence[float]],
+    mode: str = "mean",
+    k: Optional[int] = None,
+    p: Optional[float] = None,
+    closest_side: str = "high",
+) -> List[float]:
+    """Batched version of aggregate_depth_in_bbox (one value per bbox)."""
+    return [
+        aggregate_depth_in_bbox(
+            depth_map, b, mode=mode, k=k, p=p, closest_side=closest_side
+        )
+        for b in bboxes
+    ]
+
+
+def aggregate_depth_in_masks(
+    depth_map: np.ndarray,
+    masks: Union[Sequence[np.ndarray], np.ndarray],
+    mode: str = "mean",
+    k: Optional[int] = None,
+    p: Optional[float] = None,
+    closest_side: str = "high",
+) -> List[float]:
+    """
+    Batched version of aggregate_depth_in_mask.
+
+    Accepts either a list/tuple of (H, W) masks or a stacked (N, H, W) array
+    (e.g. MobileSAM `masks` output).
+    """
+    if isinstance(masks, np.ndarray) and masks.ndim == 3:
+        iterable = (masks[i] for i in range(masks.shape[0]))
+    else:
+        iterable = iter(masks)
+    return [
+        aggregate_depth_in_mask(
+            depth_map, m, mode=mode, k=k, p=p, closest_side=closest_side
+        )
+        for m in iterable
+    ]
 
 
 # ============================================================
