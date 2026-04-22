@@ -49,8 +49,10 @@ MOBILE_SAM_CHECKPOINT = os.path.join(CHECKPOINT_DIR, 'mobile_sam.pt')
 MOBILE_SAM_MODEL_TYPE = 'vit_t'  # Mobile Vision Transformer type
 
 # Depth Anything V2
-DEPTH_MODEL_NAME = 'depth-anything-v2-small'  # small, base, large versions available
-DEPTH_PROCESSOR_NAME = 'depth-anything/Depth-Anything-V2-Small-hf'
+# Must be a valid Hugging Face model identifier (see https://huggingface.co/depth-anything).
+# Other options: Depth-Anything-V2-Base-hf, Depth-Anything-V2-Large-hf
+DEPTH_MODEL_NAME = 'depth-anything/Depth-Anything-V2-Small-hf'
+DEPTH_PROCESSOR_NAME = DEPTH_MODEL_NAME  # kept for backward compat with older scripts
 
 # LLM Configuration
 LLM_MODEL_NAME = 'gpt-3.5-turbo'  # or other model names
