@@ -26,8 +26,8 @@ project/
 ├── src/                               # Source code
 │   ├── __init__.py                    # Module initialization
 │   ├── detector.py                    # ✅ YOLOv8 object detection (IMPLEMENTED)
-│   ├── segmentor.py                   # MobileSAM segmentation wrapper
-│   ├── depth_estimator.py             # Depth Anything V2 wrapper
+│   ├── segmentor.py                   # ✅ MobileSAM segmentation wrapper
+│   ├── depth_estimator.py             # ✅ Depth Anything V2 wrapper
 │   ├── llm_generator.py               # LLM text generation (optional)
 │   ├── pipeline.py                    # Main orchestration pipeline
 │   ├── visualizer.py                  # ✅ Visualization utilities (IMPLEMENTED)
@@ -65,7 +65,7 @@ project/
 │   ├── download_models.py             # Download model checkpoints
 │   ├── prepare_data.py                # Prepare dataset splits
 │   ├── evaluate_coco8.py              # ✅ COCO8 evaluation (improved version)
-│   ├── evaluate_coco8_basic.py        # COCO8 basic evaluation
+│   ├── evaluate_coco8_basic.py        # ✅ COCO8 basic evaluation
 │   ├── create_test_image.py           # Generate synthetic test images
 │   └── create_better_test_image.py    # Generate better synthetic test images
 │
@@ -186,7 +186,7 @@ print(f"Recall: {metrics['recall']:.4f}")
 | **COCO8 Evaluation** | ✅ Complete | `scripts/evaluate_coco8.py` |
 | Pipeline Orchestration | 🔄 In Progress | `src/pipeline.py` |
 | MobileSAM Segmentation | 🔄 In Progress | `src/segmentor.py` |
-| Depth Estimation | 🔄 In Progress | `src/depth_estimator.py` |
+| Depth Estimation | ✅ Complete | `src/depth_estimator.py` |
 | LLM Integration | 📋 Planned | `src/llm_generator.py` |
 
 ### COCO8 Evaluation Results
