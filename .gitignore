@@ -71,7 +71,11 @@ data/HK_custom_for_finetuning/*
 results/visualizations/*
 results/depth_maps/*
 results/metrics/*
+results/scene_analysis/*
 !results/**/.gitkeep
+
+# Local-only test images (keep out of the repo)
+test_images/
 output/
 *.mp4
 *.avi
