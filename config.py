@@ -50,8 +50,16 @@ MOBILE_SAM_MODEL_TYPE = 'vit_t'  # Mobile Vision Transformer type
 
 # Depth Anything V2
 # Must be a valid Hugging Face model identifier (see https://huggingface.co/depth-anything).
-# Other options: Depth-Anything-V2-Base-hf, Depth-Anything-V2-Large-hf
-DEPTH_MODEL_NAME = 'depth-anything/Depth-Anything-V2-Small-hf'
+#
+# We use the Metric-Indoor variant: outputs are TRUE meters (not relative depth)
+# and the model is fine-tuned on indoor metric data (Hypersim + NYU Depth v2),
+# which matches our HK indoor assistive use case.
+#
+# Other options if you need to switch:
+#   - 'depth-anything/Depth-Anything-V2-Small-hf'                  (relative depth, faster)
+#   - 'depth-anything/Depth-Anything-V2-Metric-Indoor-Base-hf'     (more accurate, slower)
+#   - 'depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf'   (outdoor scenes)
+DEPTH_MODEL_NAME = 'depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf'
 DEPTH_PROCESSOR_NAME = DEPTH_MODEL_NAME  # kept for backward compat with older scripts
 
 # LLM Configuration
@@ -96,6 +104,60 @@ EPOCHS = 100
 LEARNING_RATE = 0.0001
 WEIGHT_DECAY = 0.0001
 OPTIMIZER = 'adam'
+
+# ============================================================
+# HAZARD TAXONOMY (HK indoor assistive navigation)
+# ============================================================
+# Risk priority per hazard class [0.0, 1.0]. Higher = more dangerous.
+# Used by src/hazard_scorer.py to rank detected objects for visually impaired users.
+HAZARD_PRIORITY = {
+    "stairs": 1.0,            # Fall hazard, critical
+    "glass_door": 0.9,        # Invisible collision
+    "pillar": 0.7,            # Frontal collision
+    "hanging_obstacle": 0.7,  # Head-level signs/banners
+    "low_obstacle": 0.5,      # Chairs, tables, bins, planters
+    "person": 0.3,            # Dynamic, usually self-avoidant
+}
+
+# Mapping from vanilla COCO class names → our hazard taxonomy.
+# Used as fallback before fine-tuned YOLO is available.
+# Classes not in this dict are dropped from hazard ranking.
+COCO_TO_HAZARD = {
+    "person": "person",
+    "chair": "low_obstacle",
+    "couch": "low_obstacle",
+    "bench": "low_obstacle",
+    "potted plant": "low_obstacle",
+    "vase": "low_obstacle",
+    "dining table": "low_obstacle",
+    "suitcase": "low_obstacle",
+    "backpack": "low_obstacle",
+    "handbag": "low_obstacle",
+    # stairs / glass_door / pillar / hanging_obstacle are NOT in COCO →
+    # require fine-tuned YOLO. See scripts/train_hazard_yolo.py
+}
+
+# Risk score components — relative weights for priority / proximity / area.
+# risk = priority^w_p * proximity^w_d * mask_area_norm^w_a
+HAZARD_WEIGHT_PRIORITY = 1.0
+HAZARD_WEIGHT_PROXIMITY = 1.5
+HAZARD_WEIGHT_AREA = 0.5
+
+# Distance (m) at which proximity score = 0.5. Closer than this → score ↑.
+HAZARD_PROXIMITY_HALF_M = 2.0
+
+# How many top-risk objects to surface to the user.
+HAZARD_TOP_K = 3
+
+# Average adult step length (meters). Used to convert distance → "N steps".
+# 0.7 m is a common figure for adult walking; tune if you have user-specific data.
+STEP_LENGTH_M = 0.7
+
+# ============================================================
+# PROXIMITY ALERTING (Nearest Objects Feature)
+# ============================================================
+# Default top-K for proximity-based nearest-object ranking.
+PROXIMITY_DEFAULT_TOP_K = 5
 
 # ============================================================
 # LOGGING & OUTPUT
