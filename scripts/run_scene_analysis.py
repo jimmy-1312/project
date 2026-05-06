@@ -39,6 +39,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from src.scene_analyzer import analyze_scene
+from src.hazard_scorer import rank_hazards, format_alert
+from src.proximity_alerter import detect_by_proximity
 
 
 logger = logging.getLogger(__name__)
@@ -228,6 +230,22 @@ def main():
         "--max-images", type=int, default=0,
         help="Max images to process (0 = all found). Useful for quick smoke tests."
     )
+    parser.add_argument(
+        "--hazard", action="store_true",
+        help="Rank detected objects by HK-indoor hazard risk (top-K alerts)."
+    )
+    parser.add_argument(
+        "--hazard-top-k", type=int, default=None,
+        help=f"Top-K hazards to surface (default: config.HAZARD_TOP_K = {config.HAZARD_TOP_K})."
+    )
+    parser.add_argument(
+        "--nearest", action="store_true",
+        help="Rank detected objects by proximity (distance) and emit natural-language alerts."
+    )
+    parser.add_argument(
+        "--nearest-top-k", type=int, default=5,
+        help="Top-K nearest objects to surface (default: 5)."
+    )
     args = parser.parse_args()
 
     # Determine images: --image > --images-dir > COCO8 default
@@ -279,7 +297,18 @@ def main():
         depth_estimator = DepthEstimator()
 
     # Process images
-    aggregation_modes = ["mean", "median", "max", {"mode": "top_k", "k": 100}]
+    aggregation_modes = ["mean", "median", "min", "max", {"mode": "top_k", "k": 100}]
+
+    # Depth convention depends on the model:
+    #   - Metric-Indoor variant → output is in METERS, smaller = closer ("low")
+    #   - Relative variant      → output in [0,1], larger = closer  ("high")
+    is_metric_model = "Metric" in (config.DEPTH_MODEL_NAME or "")
+    closest_side = "low" if is_metric_model else "high"
+    logger.info(
+        f"Depth convention: model={'metric' if is_metric_model else 'relative'}, "
+        f"closest_side={closest_side}"
+    )
+
     all_results = []
 
     for i, image_path in enumerate(image_paths, 1):
@@ -304,6 +333,7 @@ def main():
                 segmentor,
                 depth_estimator,
                 aggregation_modes,
+                closest_side=closest_side,
             )
 
             if results:
@@ -313,6 +343,35 @@ def main():
                     "num_objects": len(results),
                     "results": results,
                 })
+
+                # Hazard ranking (optional)
+                hazards = []
+                if args.hazard:
+                    hazards = rank_hazards(
+                        results,
+                        image_shape=image_rgb.shape[:2],
+                        top_k=args.hazard_top_k,
+                    )
+                    if hazards:
+                        logger.info("  Hazard alerts (top-K):")
+                        for h in hazards:
+                            logger.info(f"    [{h['risk_score']:.2f}] {format_alert(h)}")
+                    else:
+                        logger.info("  No hazards above threshold.")
+
+                # Proximity-based nearest objects ranking (optional)
+                nearest = []
+                if args.nearest:
+                    nearest = detect_by_proximity(
+                        results,
+                        top_k=args.nearest_top_k,
+                    )
+                    if nearest:
+                        logger.info("  Nearest objects (top-K):")
+                        for n in nearest:
+                            logger.info(f"    {n['alert']}")
+                    else:
+                        logger.info("  No objects with distance information.")
 
                 # Save JSON
                 image_name = Path(image_path).stem
@@ -332,6 +391,30 @@ def main():
                             "centroid_x_norm": float(r["centroid_x_norm"]),
                         }
                         for r in results
+                    ],
+                    "hazards": [
+                        {
+                            "hazard_class": h["hazard_class"],
+                            "class_name": h["class_name"],
+                            "risk_score": float(h["risk_score"]),
+                            "distance_m": (
+                                float(h["distance_m"]) if h.get("distance_m") is not None else None
+                            ),
+                            "direction": h.get("direction"),
+                            "angle_deg": float(h["angle_deg"]) if h.get("angle_deg") is not None else None,
+                            "alert": format_alert(h),
+                        }
+                        for h in hazards
+                    ],
+                    "nearest_alerts": [
+                        {
+                            "class_name": n["class_name"],
+                            "direction": n["direction"],
+                            "distance_m": float(n["distance_m"]),
+                            "angle_deg": float(n["angle_deg"]),
+                            "alert": n["alert"],
+                        }
+                        for n in nearest
                     ],
                 }
                 with open(json_path, "w") as f:

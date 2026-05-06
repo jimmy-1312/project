@@ -31,11 +31,18 @@ class DepthEstimator:
     ) -> None:
         self.model_name = model_name or getattr(config, 'DEPTH_MODEL_NAME', 'depth-anything/Depth-Anything-V2-Small-hf')
         self.device = device or getattr(config, 'DEVICE', 'cuda' if torch.cuda.is_available() else 'cpu')
-        
+
+        # Metric variants (Metric-Indoor / Metric-Outdoor) output absolute depth
+        # in meters. Relative variants output unitless inverse-depth-like values
+        # that we min-max normalize to [0, 1]. Detect from the model name so we
+        # don't squash real meters into a relative range.
+        self.is_metric = "Metric" in self.model_name
+
         if AutoImageProcessor is None:
             raise ImportError("Please install transformers: pip install transformers")
-            
+
         print(f"Loading Depth Estimator ({self.model_name}) on {self.device}...")
+        print(f"  → Output mode: {'metric (meters)' if self.is_metric else 'relative ([0,1])'}")
         self.processor = AutoImageProcessor.from_pretrained(self.model_name)
         self.model = AutoModelForDepthEstimation.from_pretrained(self.model_name).to(self.device)
         self.model.eval()
@@ -43,17 +50,22 @@ class DepthEstimator:
     
     def estimate_depth(self, image: np.ndarray) -> np.ndarray:
         """
-        Estimate relative depth map from input image.
+        Estimate a depth map from the input image.
+
+        Output convention depends on the loaded model (set by self.is_metric):
+          - Metric variant  → absolute depth in METERS (raw model output).
+          - Relative variant → unitless, min-max normalized to [0, 1] where
+            higher value = closer (Depth Anything inverse-depth convention).
 
         Args:
-            image: RGB uint8 numpy array (H, W, 3) or PIL Image
+            image: RGB uint8 numpy array (H, W, 3) or PIL Image.
 
         Returns:
-            Relative depth map (H, W) float32, range [0, 1]
+            Depth map (H, W) float32. Units depend on self.is_metric.
 
         Raises:
-            TypeError: If input is not ndarray or PIL Image
-            ValueError: If image is empty (0-size)
+            TypeError: If input is not ndarray or PIL Image.
+            ValueError: If image is empty (0-size).
         """
         if isinstance(image, np.ndarray):
             # Handle grayscale: convert to RGB
@@ -88,7 +100,14 @@ class DepthEstimator:
 
         depth_map = predicted_depth.cpu().numpy().astype(np.float32)
 
-        # Normalize to 0-1 for relative depth representation (min-max normalization)
+        if self.is_metric:
+            # Metric variant: model output is already absolute depth in meters.
+            # Do NOT normalize — that would destroy the metric scale.
+            # Clamp non-finite values defensively.
+            depth_map = np.where(np.isfinite(depth_map), depth_map, 0.0).astype(np.float32)
+            return depth_map
+
+        # Relative variant: min-max normalize to [0, 1] (higher = closer).
         d_min, d_max = depth_map.min(), depth_map.max()
         if d_max > d_min:
             depth_map = (depth_map - d_min) / (d_max - d_min)
