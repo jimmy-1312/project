@@ -41,6 +41,7 @@ import config
 from src.scene_analyzer import analyze_scene
 from src.hazard_scorer import rank_hazards, format_alert
 from src.proximity_alerter import detect_by_proximity
+from src.obstacle_proposer import propose_obstacles, merge_with_detections
 
 
 logger = logging.getLogger(__name__)
@@ -246,6 +247,15 @@ def main():
         "--nearest-top-k", type=int, default=5,
         help="Top-K nearest objects to surface (default: 5)."
     )
+    parser.add_argument(
+        "--include-obstacles", action="store_true",
+        help="Also propose unclassified obstacles from depth (depth-only fallback "
+             "for things YOLO doesn't know — walls, etc.)."
+    )
+    parser.add_argument(
+        "--obstacle-threshold-m", type=float, default=2.0,
+        help="Distance threshold for the obstacle proposer (default 2.0 m)."
+    )
     args = parser.parse_args()
 
     # Determine images: --image > --images-dir > COCO8 default
@@ -335,6 +345,20 @@ def main():
                 aggregation_modes,
                 closest_side=closest_side,
             )
+
+            # Optional: depth-based obstacle proposer for things YOLO didn't detect
+            if args.include_obstacles:
+                # Compute the depth map once (analyze_scene already did, but it
+                # doesn't expose it). For metric models the raw output is meters.
+                depth_map_full = depth_estimator.estimate_depth(image_rgb)
+                proposals = propose_obstacles(
+                    depth_map_full,
+                    claimed_masks=[r.get("mask") for r in results],
+                    distance_threshold_m=args.obstacle_threshold_m,
+                )
+                if proposals:
+                    logger.info(f"  + {len(proposals)} obstacle proposal(s) from depth")
+                results = merge_with_detections(results, proposals)
 
             if results:
                 logger.info(f"  Found {len(results)} objects")
