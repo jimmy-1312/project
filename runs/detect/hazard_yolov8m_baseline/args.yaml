@@ -1,10 +1,10 @@
 task: detect
 mode: train
-model: /Users/younseopark/Documents/GitHub/project/model/weights/yolov8m.pt
+model: /Users/younseopark/Documents/GitHub/project/model/weights/yolo11m.pt
 data: /Users/younseopark/Documents/GitHub/project/data/HK_custom_for_finetuning/data.yaml
 epochs: 100
 time: null
-patience: 30
+patience: 50
 batch: 8
 imgsz: 640
 save: true

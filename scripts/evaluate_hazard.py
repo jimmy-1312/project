@@ -108,20 +108,36 @@ def greedy_match(
 # ============================================================
 
 
-def load_gt_for_image(label_path: Path) -> List[Dict]:
-    """Read 6-column label file. Each entry has cls, bbox, distance_m."""
+def load_gt_for_image(label_path: Path, distances_for_stem: Optional[List[float]] = None) -> List[Dict]:
+    """
+    Read a 5-column YOLO label file (cls cx cy w h) and pair each row with
+    a per-target distance from distances.json (passed in by the caller).
+
+    Args:
+        label_path: path to <stem>.txt
+        distances_for_stem: list of distances aligned with label row order.
+            None values are treated as NaN. If shorter than label count, the
+            remainder is filled with NaN.
+
+    Returns:
+        list of {"cls": int, "bbox": [cx, cy, w, h], "distance_m": float}.
+    """
     if not label_path.is_file():
         return []
     out = []
-    for raw in label_path.read_text().splitlines():
+    distances_for_stem = distances_for_stem or []
+    for i, raw in enumerate(label_path.read_text().splitlines()):
         if not raw.strip():
             continue
         parts = raw.split()
+        if len(parts) < 5:
+            continue
+        d = distances_for_stem[i] if i < len(distances_for_stem) else None
         out.append(
             {
                 "cls": int(float(parts[0])),
                 "bbox": np.array([float(p) for p in parts[1:5]], dtype=np.float32),
-                "distance_m": float(parts[5]) if len(parts) >= 6 else float("nan"),
+                "distance_m": float("nan") if d is None else float(d),
             }
         )
     return out
@@ -204,24 +220,45 @@ def predict_with_distance(
 # ============================================================
 
 
-def topk_ranking_accuracy(
-    pred_distances: List[float],
-    gt_distances: List[float],
+def topk_nearest_recall(
+    preds: List[Dict],
+    gts: List[Dict],
+    img_w: int,
+    img_h: int,
     k: int,
+    match_iou: float = 0.3,
 ) -> float:
     """
-    Fraction of GT's top-K nearest classes that appear in the prediction's top-K.
-    Both inputs are unsorted lists of distances; we compare by rank-of-distance only.
+    "Of the K closest ground-truth objects, how many did the detector find?"
+
+    Concretely:
+      1. Pick the K GT objects with smallest finite distance_m.
+      2. For each, count it as recovered if ANY predicted box has IoU > match_iou.
+      3. Return recovered / K.
+
+    This is the metric that matters for the assistive use case: warning the user
+    about the closest hazards. Returns NaN if no GT has a finite distance.
     """
-    if not gt_distances:
+    gt_with_dist = [g for g in gts if np.isfinite(g.get("distance_m", float("nan")))]
+    if not gt_with_dist:
         return float("nan")
-    pred_ranks = sorted(range(len(pred_distances)), key=lambda i: pred_distances[i])[:k]
-    gt_ranks = sorted(range(len(gt_distances)), key=lambda i: gt_distances[i])[:k]
-    pred_set = set(pred_ranks)
-    gt_set = set(gt_ranks)
-    if not gt_set:
-        return float("nan")
-    return len(pred_set & gt_set) / len(gt_set)
+
+    # Sort by distance ascending; take K nearest
+    gt_with_dist.sort(key=lambda g: g["distance_m"])
+    topk_gt = gt_with_dist[:k]
+
+    pred_boxes = [p["bbox"] for p in preds]
+    if not pred_boxes:
+        return 0.0
+
+    recovered = 0
+    for g in topk_gt:
+        gt_box = g["bbox"]
+        for pb in pred_boxes:
+            if iou_xywh_normalized(pb, gt_box, img_w, img_h) > match_iou:
+                recovered += 1
+                break
+    return recovered / max(len(topk_gt), 1)
 
 
 # ============================================================
@@ -246,9 +283,14 @@ def main():
                              "(0.001) so the precision-recall curve covers all "
                              "thresholds correctly.")
     parser.add_argument("--iou", type=float, default=0.5,
-                        help="IoU threshold for matching predictions to GT.")
+                        help="NMS IoU threshold passed to YOLO predict. Not the matching threshold.")
+    parser.add_argument("--match-iou", type=float, default=0.3,
+                        help="IoU threshold for matching predictions to GT in our custom "
+                             "metric pass (distance MAE / top-K nearest recall / obstacle recall). "
+                             "Lower than mAP's 0.5 because we care about approximate localization, "
+                             "not tight bbox accuracy.")
     parser.add_argument("--top-k", type=int, default=3,
-                        help="K for top-K ranking accuracy. Default 3.")
+                        help="K for top-K nearest-GT recall. Default 3.")
     parser.add_argument("--no-depth", action="store_true",
                         help="Skip depth pipeline (distance MAE will be NaN).")
     parser.add_argument("--tag", default="model",
@@ -291,6 +333,10 @@ def main():
     img_dir = data_root / "images" / args.split
     lbl_dir = data_root / "labels" / args.split
 
+    # Per-target GT distances live out-of-band in distances.json (5-col labels).
+    from src.depth_yolo.dataset import load_distances_for_split
+    distances_by_stem = load_distances_for_split(str(data_root), args.split)
+
     images = sorted(p for p in img_dir.iterdir()
                     if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".bmp"))
     logger.info(f"Custom-metric pass over {len(images)} {args.split} images...")
@@ -304,7 +350,10 @@ def main():
     per_image_records: List[Dict] = []
 
     for img_path in images:
-        gts = load_gt_for_image(lbl_dir / f"{img_path.stem}.txt")
+        gts = load_gt_for_image(
+            lbl_dir / f"{img_path.stem}.txt",
+            distances_for_stem=distances_by_stem.get(img_path.stem),
+        )
         if not gts:
             continue
 
@@ -315,26 +364,27 @@ def main():
                                        conf=args.conf, iou=args.iou,
                                        depth_estimator=depth_estimator)
 
-        # IoU match preds → gts (class-agnostic)
+        # IoU match preds → gts (class-agnostic). Use a separate, looser threshold
+        # for matching: mAP@0.5 wants tight boxes, but for distance / nearest-recall
+        # we care about "did the model find approximately the right region".
         pred_boxes = [p["bbox"] for p in preds]
         gt_boxes = [g["bbox"] for g in gts]
-        pairs = greedy_match(pred_boxes, gt_boxes, W, H, iou_thresh=args.iou)
+        pairs = greedy_match(pred_boxes, gt_boxes, W, H, iou_thresh=args.match_iou)
 
-        # Distance MAE on matched pairs that have GT distance + predicted distance
+        # Distance MAE on matched pairs that have BOTH finite distances.
+        # GT distance is finite only for HK images (Roboflow rows have NaN).
         for pi, gi in pairs:
             gd = gts[gi]["distance_m"]
             pd = preds[pi]["distance_m"]
             if np.isfinite(gd) and np.isfinite(pd):
                 dist_errors.append(abs(pd - gd))
 
-        # Top-K ranking — default NaN so the per-image record is always defined
-        acc = float("nan")
-        pred_d = [p["distance_m"] for p in preds]
-        gt_d = [g["distance_m"] for g in gts]
-        if gt_d and any(np.isfinite(d) for d in gt_d):
-            acc = topk_ranking_accuracy(pred_d, gt_d, k=args.top_k)
-            if np.isfinite(acc):
-                topk_scores.append(acc)
+        # Top-K nearest recall: of the K closest GT objects, how many were detected?
+        topk_recall = topk_nearest_recall(
+            preds, gts, img_w=W, img_h=H, k=args.top_k, match_iou=args.match_iou
+        )
+        if np.isfinite(topk_recall):
+            topk_scores.append(topk_recall)
 
         # Obstacle recall — was there a "obstacle" prediction matched to a GT obstacle?
         for gi, g in enumerate(gts):
@@ -351,22 +401,24 @@ def main():
             "n_gt": len(gts),
             "n_pred": len(preds),
             "n_matched": len(pairs),
-            "topk_acc": float(acc) if np.isfinite(acc) else None,
+            "topk_recall": float(topk_recall) if np.isfinite(topk_recall) else None,
         })
 
+    topk_key = f"top{args.top_k}_nearest_recall"
     summary = {
         "tag": args.tag,
         "weights": str(args.weights),
         "split": args.split,
         "conf": args.conf,
-        "iou": args.iou,
+        "iou_nms": args.iou,
+        "match_iou": args.match_iou,
         "top_k": args.top_k,
         "mAP_50": map50,
         "mAP_50_95": map5095,
         "per_class_mAP_50_95": per_class,
         "distance_MAE_m": float(np.mean(dist_errors)) if dist_errors else float("nan"),
         "distance_n_matched": len(dist_errors),
-        f"top{args.top_k}_ranking_acc": float(np.mean(topk_scores)) if topk_scores else float("nan"),
+        topk_key: float(np.mean(topk_scores)) if topk_scores else float("nan"),
         "obstacle_recall": (obstacle_recalled / obstacle_total) if obstacle_total else float("nan"),
         "obstacle_total": obstacle_total,
         "obstacle_recalled": obstacle_recalled,
@@ -379,12 +431,12 @@ def main():
 
     logger.info("\n" + "=" * 60)
     logger.info(f"[{args.tag}] @ {args.split}")
-    logger.info(f"  mAP@0.5         : {map50:.4f}")
-    logger.info(f"  mAP@0.5:0.95    : {map5095:.4f}")
-    logger.info(f"  Distance MAE    : "
+    logger.info(f"  mAP@0.5             : {map50:.4f}")
+    logger.info(f"  mAP@0.5:0.95        : {map5095:.4f}")
+    logger.info(f"  Distance MAE        : "
                 f"{summary['distance_MAE_m']:.3f} m  ({summary['distance_n_matched']} pairs)")
-    logger.info(f"  Top-{args.top_k} ranking acc: {summary[f'top{args.top_k}_ranking_acc']:.3f}")
-    logger.info(f"  Obstacle recall : {summary['obstacle_recall']}  "
+    logger.info(f"  Top-{args.top_k} nearest recall: {summary[topk_key]:.3f}")
+    logger.info(f"  Obstacle recall     : {summary['obstacle_recall']}  "
                 f"({obstacle_recalled}/{obstacle_total})")
     logger.info(f"\nSaved: {args.output}")
 

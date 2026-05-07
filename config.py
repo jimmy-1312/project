@@ -45,7 +45,7 @@ CUDA_AVAILABLE = torch.cuda.is_available()
 # MODEL NAMES & IDENTIFIERS
 # ============================================================
 # YOLO Detection Model
-YOLO_MODEL_PATH = os.path.join(CHECKPOINT_DIR, 'yolov8m.pt')
+YOLO_MODEL_PATH = os.path.join(CHECKPOINT_DIR, 'yolo11m.pt')
 YOLO_MODEL_NAME = YOLO_MODEL_PATH  # Use local path if available, otherwise model name
 YOLO_CONFIDENCE = 0.3
 YOLO_IOU = 0.45

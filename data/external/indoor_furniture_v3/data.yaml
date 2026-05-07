@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 33
+names: ['Bed', 'Cabinetry', 'Chair', 'Closet', 'Couch', 'Door', 'Lamp', 'Lamppost', 'Refrigerator', 'Sofa', 'Staircase', 'Table', 'Train', 'Window', 'a sofa', 'bed', 'beside  table', 'chair', 'column', 'curtain', 'desk', 'door', 'oven', 'refrigerator', 'table', 'tap', 'television', 'toilet', 'tree', 'wardrobe', 'wash basin', 'washing machine', 'window']
+
+roboflow:
+  workspace: younseos-workspace
+  project: younseos-workspace
+  version: dataset
+  license: Private
+  url: https://app.roboflow.com/younseos-workspace/younseos-workspace/dataset

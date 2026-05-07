@@ -60,13 +60,22 @@ def load_distances_for_split(root: str, split: str) -> Dict[str, List[float]]:
 
     distances.json is written by scripts/convert_to_yolo.py and has shape:
         {"train": {"<stem>": [d1, d2, ...]}, "val": {...}, "test": {...}}
+
+    Public-data rows from merge_external_dataset.py have JSON `null` for
+    distance (no metric ground truth). We coerce those to float NaN here
+    so the loss code, which expects a numeric tensor, can use the
+    "NaN → weight 1.0" fail-safe in `distance_weight()`.
     """
     p = Path(root) / "distances.json"
     if not p.is_file():
         logger.warning(f"  distances.json not found at {p}; distances will be NaN")
         return {}
     blob = json.loads(p.read_text())
-    return blob.get(split, {}) or {}
+    raw = blob.get(split, {}) or {}
+    return {
+        stem: [float("nan") if d is None else float(d) for d in dists]
+        for stem, dists in raw.items()
+    }
 
 
 # ============================================================
