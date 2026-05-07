@@ -1,0 +1,21 @@
+{
+  "_note": "Image size: 4284 x 5712. Bboxes are in pixels (not normalised).",
+  "_bbox_format": "[x1_px, y1_px, x2_px, y2_px]",
+  "image_001.jpg": [
+    {"class": "bed",   "bbox": [161, 2148, 3035, 5227], "info": [0.55, 12, 1.27]},
+    {"class": "chair", "bbox": [0,   2763, 1294, 5129], "info": [0.80, 10, 1.23]}
+  ],
+  "image_002.jpg": [
+    {"class": "couch", "bbox": [2990, 3433, 4284, 5712], "info": [0.45, 2, 0.95]}
+  ],
+  "image_003.jpg": [
+    {"class": "couch", "bbox": [2865, 2879, 4284, 5712], "info": [0.45, 10, 1.40]}
+  ],
+  "image_004.jpg": [],
+  "image_005.jpg": [],
+  "image_006.jpg": [
+    {"class": "dining table", "bbox": [0,    3085, 1490, 4147], "info": [0.75, 10, 0.85]},
+    {"class": "dining table", "bbox": [3008, 2585, 4284, 5712], "info": [0.75,  2, 1.00]},
+    {"class": "chair",        "bbox": [2454, 2808, 3981, 5619], "info": [0.80,  1, 1.30]}
+  ]
+}

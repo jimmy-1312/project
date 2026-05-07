@@ -1,0 +1,21 @@
+{
+  "1.jpg": [
+    {"class": "refrigerator", "bbox": [0.2813, 0.0853, 0.7067, 0.9196], "info": [1.7, 12, 1.4]}
+  ],
+  "2.jpg": [
+    {"class": null, "bbox": null, "info": null}
+  ],
+  "3.jpg": [
+    {"class": "chair", "bbox": [0.4839, 0.5244, 0.8810, 0.9980], "info": [0.7, 12, 1.2]},
+    {"class": "table", "bbox": [0.0030, 0.4836, 0.7681, 0.9343], "info": [0.7, 12, 1.1]}
+  ],
+  "4.jpg": [
+    {"class": "chair", "bbox": null, "info": null}
+  ],
+  "5.jpg": [
+    {"class": "chair", "bbox": [0.095008, 0.65997, 0.37862, 0.99674], "info": [0.46, 11, 1.26]}
+  ],
+  "6.jpg": [
+    {"class": null, "bbox": null, "info": null}
+  ]
+}
