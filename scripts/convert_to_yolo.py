@@ -16,8 +16,8 @@ Per-target distance is stored OUT OF BAND.
           "test":  {...}
         }
 
-  Distance order matches label-file row order. The distance-weighted loss
-  (variant C) reads this file via src/depth_yolo/dataset.load_distances_for_split.
+  Distance order matches label-file row order. scripts/evaluate_hazard.py
+  reads this file to compute Distance MAE.
 
 Outputs (under args.out_dir):
     images/{train,val,test}/<filename>     copies of the raw images

@@ -39,7 +39,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from src.scene_analyzer import analyze_scene
-from src.hazard_scorer import rank_hazards, format_alert
 from src.proximity_alerter import detect_by_proximity
 from src.obstacle_proposer import propose_obstacles, merge_with_detections
 
@@ -232,14 +231,6 @@ def main():
         help="Max images to process (0 = all found). Useful for quick smoke tests."
     )
     parser.add_argument(
-        "--hazard", action="store_true",
-        help="Rank detected objects by HK-indoor hazard risk (top-K alerts)."
-    )
-    parser.add_argument(
-        "--hazard-top-k", type=int, default=None,
-        help=f"Top-K hazards to surface (default: config.HAZARD_TOP_K = {config.HAZARD_TOP_K})."
-    )
-    parser.add_argument(
         "--nearest", action="store_true",
         help="Rank detected objects by proximity (distance) and emit natural-language alerts."
     )
@@ -368,21 +359,6 @@ def main():
                     "results": results,
                 })
 
-                # Hazard ranking (optional)
-                hazards = []
-                if args.hazard:
-                    hazards = rank_hazards(
-                        results,
-                        image_shape=image_rgb.shape[:2],
-                        top_k=args.hazard_top_k,
-                    )
-                    if hazards:
-                        logger.info("  Hazard alerts (top-K):")
-                        for h in hazards:
-                            logger.info(f"    [{h['risk_score']:.2f}] {format_alert(h)}")
-                    else:
-                        logger.info("  No hazards above threshold.")
-
                 # Proximity-based nearest objects ranking (optional)
                 nearest = []
                 if args.nearest:
@@ -415,20 +391,6 @@ def main():
                             "centroid_x_norm": float(r["centroid_x_norm"]),
                         }
                         for r in results
-                    ],
-                    "hazards": [
-                        {
-                            "hazard_class": h["hazard_class"],
-                            "class_name": h["class_name"],
-                            "risk_score": float(h["risk_score"]),
-                            "distance_m": (
-                                float(h["distance_m"]) if h.get("distance_m") is not None else None
-                            ),
-                            "direction": h.get("direction"),
-                            "angle_deg": float(h["angle_deg"]) if h.get("angle_deg") is not None else None,
-                            "alert": format_alert(h),
-                        }
-                        for h in hazards
                     ],
                     "nearest_alerts": [
                         {

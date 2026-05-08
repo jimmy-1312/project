@@ -333,9 +333,16 @@ def main():
     img_dir = data_root / "images" / args.split
     lbl_dir = data_root / "labels" / args.split
 
-    # Per-target GT distances live out-of-band in distances.json (5-col labels).
-    from src.depth_yolo.dataset import load_distances_for_split
-    distances_by_stem = load_distances_for_split(str(data_root), args.split)
+    # Per-target GT distances live out-of-band in distances.json (we use 5-col labels).
+    distances_by_stem = {}
+    dist_json = data_root / "distances.json"
+    if dist_json.is_file():
+        blob = json.loads(dist_json.read_text())
+        raw = blob.get(args.split, {}) or {}
+        distances_by_stem = {
+            stem: [float("nan") if d is None else float(d) for d in dists]
+            for stem, dists in raw.items()
+        }
 
     images = sorted(p for p in img_dir.iterdir()
                     if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".bmp"))
