@@ -200,3 +200,54 @@ def detect_by_proximity(
         })
 
     return result
+
+
+# ============================================================
+# Movement guidance (a.k.a. "step mode")
+# ============================================================
+
+CRITICAL_DIST_M = 0.5    # below → STOP regardless of direction
+CAUTION_DIST_M = 1.5     # below → adjust path
+
+
+def suggest_movement(top_k_alerts):
+    """Given top-K nearest alerts (output of detect_by_proximity), return a movement
+    instruction string and a stable token.
+
+    Returns: {"instruction": str, "token": one of
+             {"STOP", "MOVE_LEFT", "MOVE_RIGHT", "DRIFT_LEFT", "DRIFT_RIGHT", "FORWARD"}}.
+    """
+    if not top_k_alerts:
+        return {"instruction": "FORWARD CLEAR — no obstacles detected", "token": "FORWARD"}
+
+    closest = top_k_alerts[0]
+    d = closest.get("distance_m", float("inf"))
+    direction = closest.get("direction", "unknown")
+
+    if d < CRITICAL_DIST_M:
+        return {"instruction": f"STOP — {closest.get('class_name','obstacle')} {d:.1f}m {direction}",
+                "token": "STOP"}
+
+    # Catalogue what's blocking each side within caution range
+    blocked = {"left": False, "center": False, "right": False}
+    for a in top_k_alerts:
+        if a.get("distance_m", float("inf")) < CAUTION_DIST_M:
+            dr = a.get("direction")
+            if dr in blocked:
+                blocked[dr] = True
+
+    if blocked["center"]:
+        if not blocked["left"] and blocked["right"]:
+            return {"instruction": "MOVE LEFT — clear path", "token": "MOVE_LEFT"}
+        if not blocked["right"] and blocked["left"]:
+            return {"instruction": "MOVE RIGHT — clear path", "token": "MOVE_RIGHT"}
+        if not blocked["left"] and not blocked["right"]:
+            return {"instruction": "MOVE LEFT — both sides clear, defaulting", "token": "MOVE_LEFT"}
+        return {"instruction": "STOP — surrounded", "token": "STOP"}
+
+    if blocked["left"] and not blocked["right"]:
+        return {"instruction": "DRIFT RIGHT — obstacle on left", "token": "DRIFT_RIGHT"}
+    if blocked["right"] and not blocked["left"]:
+        return {"instruction": "DRIFT LEFT — obstacle on right", "token": "DRIFT_LEFT"}
+
+    return {"instruction": "FORWARD CLEAR", "token": "FORWARD"}

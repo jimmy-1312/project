@@ -202,7 +202,7 @@ def iter_hf_dataset(
             "pip3 install datasets   # required for --hf-dataset"
         ) from e
 
-    ds = load_dataset(name, split=split, streaming=False)
+    ds = load_dataset(name, split=split, streaming=False, trust_remote_code=True)
     if max_images > 0:
         ds = ds.select(range(min(max_images, len(ds))))
 

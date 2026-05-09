@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from src.scene_analyzer import analyze_scene
-from src.proximity_alerter import detect_by_proximity
+from src.proximity_alerter import detect_by_proximity, suggest_movement
 from src.obstacle_proposer import propose_obstacles, merge_with_detections
 
 
@@ -361,6 +361,7 @@ def main():
 
                 # Proximity-based nearest objects ranking (optional)
                 nearest = []
+                movement = None
                 if args.nearest:
                     nearest = detect_by_proximity(
                         results,
@@ -372,6 +373,8 @@ def main():
                             logger.info(f"    {n['alert']}")
                     else:
                         logger.info("  No objects with distance information.")
+                    movement = suggest_movement(nearest)
+                    logger.info(f"  Movement: {movement['instruction']}")
 
                 # Save JSON
                 image_name = Path(image_path).stem
@@ -402,6 +405,7 @@ def main():
                         }
                         for n in nearest
                     ],
+                    "movement": movement,
                 }
                 with open(json_path, "w") as f:
                     json.dump(json_data, f, indent=2)

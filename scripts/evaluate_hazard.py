@@ -184,8 +184,16 @@ def predict_with_distance(
                 dtype=np.float32,
             )
 
+    # Optional COCO → HK class remap (for vanilla baseline mode).
+    coco_to_hk = getattr(predict_with_distance, "_coco_to_hk", None)
+
     out = []
     for i, (xyxy, c, p) in enumerate(zip(boxes_xyxy, cls_ids, confs)):
+        if coco_to_hk is not None:
+            mapped = coco_to_hk.get(int(c))
+            if mapped is None:
+                continue  # vanilla model predicted something not in our taxonomy → drop
+            c = mapped
         x1, y1, x2, y2 = xyxy
         cx = (x1 + x2) / 2.0 / W
         cy = (y1 + y2) / 2.0 / H
@@ -298,10 +306,32 @@ def main():
     parser.add_argument("--output",
                         default=os.path.join(config.METRICS_DIR, "hazard_eval.json"),
                         help="JSON output path.")
+    parser.add_argument("--vanilla", action="store_true",
+                        help="Vanilla baseline: predict with COCO 80 classes and remap to "
+                             "our 8-class taxonomy. Use with COCO-pretrained YOLO weights "
+                             "(e.g. yolo11s.pt). Classes without a COCO equivalent "
+                             "(door, obstacle) get recall=0 by construction.")
     args = parser.parse_args()
 
     from ultralytics import YOLO  # lazy
     yolo_model = YOLO(args.weights)
+
+    # Vanilla mode: remap COCO predict ids → our HK class ids for the custom-metric pass.
+    if args.vanilla:
+        # COCO id → our HK id. Classes with no COCO equivalent are simply absent → recall=0.
+        coco_to_hk = {
+            56: 0,  # chair → chair
+            60: 1,  # dining table → table        (closest match)
+            72: 2,  # refrigerator → refrigerator
+            59: 4,  # bed → bed
+            57: 5,  # couch → couch
+            # 60 also re-maps to 6 (dining_table) — we keep first mapping; report explicitly.
+            # door (3) and obstacle (7): no COCO equivalent — model can't predict them.
+        }
+        predict_with_distance._coco_to_hk = coco_to_hk
+        logger.info(f"Vanilla mode: remapping {len(coco_to_hk)} COCO classes → HK taxonomy. "
+                    f"door/obstacle/dining_table will have recall=0 (no COCO equivalent / "
+                    f"merged into table).")
 
     # Ultralytics built-in val gives us mAP. Do NOT pass `conf` here —
     # mAP is integrated over the full PR curve, so ultralytics uses 0.001

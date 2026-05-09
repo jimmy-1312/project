@@ -11,6 +11,7 @@ import math
 import numpy as np
 import pytest
 
+from src.proximity_alerter import suggest_movement
 from src.proximity_alerter import (
     _direction_word,
     _extract_distance_m,
@@ -370,3 +371,54 @@ class TestPerformance:
         smallest_5 = sorted(dists)[:5]
         for got, exp in zip([r["distance_m"] for r in result], smallest_5):
             assert math.isclose(got, exp)
+
+
+# ============================================================
+# suggest_movement (step mode)
+# ============================================================
+
+
+def _alert(distance, direction, name="obj"):
+    return {"class_name": name, "direction": direction, "distance_m": distance,
+            "angle_deg": 0.0, "alert": f"{direction} {distance}m {name}"}
+
+
+class TestSuggestMovement:
+    def test_empty_returns_forward(self):
+        out = suggest_movement([])
+        assert out["token"] == "FORWARD"
+
+    def test_critical_distance_stops(self):
+        out = suggest_movement([_alert(0.3, "left", "chair")])
+        assert out["token"] == "STOP"
+
+    def test_center_blocked_left_clear(self):
+        out = suggest_movement([_alert(1.0, "center"), _alert(2.0, "right")])
+        # right within 1.5? 2.0 → not blocked. left? not present → not blocked.
+        # both sides clear → default LEFT
+        assert out["token"] == "MOVE_LEFT"
+
+    def test_center_blocked_right_only_clear(self):
+        out = suggest_movement([_alert(1.0, "center"), _alert(0.8, "left")])
+        assert out["token"] == "MOVE_RIGHT"
+
+    def test_center_blocked_left_only_clear(self):
+        out = suggest_movement([_alert(1.0, "center"), _alert(0.8, "right")])
+        assert out["token"] == "MOVE_LEFT"
+
+    def test_surrounded_stops(self):
+        out = suggest_movement([_alert(1.0, "center"),
+                                _alert(0.8, "left"), _alert(0.8, "right")])
+        assert out["token"] == "STOP"
+
+    def test_left_obstacle_drift_right(self):
+        out = suggest_movement([_alert(1.0, "left")])
+        assert out["token"] == "DRIFT_RIGHT"
+
+    def test_right_obstacle_drift_left(self):
+        out = suggest_movement([_alert(1.0, "right")])
+        assert out["token"] == "DRIFT_LEFT"
+
+    def test_far_object_forward(self):
+        out = suggest_movement([_alert(3.0, "center")])
+        assert out["token"] == "FORWARD"
