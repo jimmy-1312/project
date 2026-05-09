@@ -297,8 +297,8 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--uploads-dir",
-        default="/sessions/determined-keen-hypatia/mnt/uploads",
-        help="Directory containing the three docx files.",
+        default=os.path.join(config.DATA_DIR, "source_docx"),
+        help="Directory containing the three docx files. Default: data/source_docx/.",
     )
     parser.add_argument(
         "--out-dir",
