@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from yolo import build_models, analyze_image, save_yolo_boxes, save_yolo_masks, overlay_yolo_masks
+from Yolo import build_models, analyze_image, save_yolo_boxes, save_yolo_masks, overlay_yolo_masks
 
 
 def format_output(detectable, non_detectable, top_k=3):
